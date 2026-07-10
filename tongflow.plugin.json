@@ -1,0 +1,25 @@
+{
+    "plugin": {
+        "name": "Sapiens2",
+        "description": "Meta Sapiens2 human-centric suite: pose, body-part segmentation, surface normals, 3D pointmap, human matting, and video motion capture (animated GLB).",
+        "icon": "/plugins/tongflow-modal-sapiens2.svg"
+    },
+    "env": [
+        {
+            "key": "MODAL_TOKEN_ID",
+            "required": true,
+            "description": "Modal token id",
+            "url": "https://modal.com/settings/tokens"
+        },
+        {
+            "key": "MODAL_TOKEN_SECRET",
+            "required": true,
+            "description": "Modal token secret (paired with MODAL_TOKEN_ID)"
+        },
+        {
+            "key": "TONGFLOW_MODAL_CALL_TIMEOUT_S",
+            "default": "3600",
+            "description": "Max seconds to wait for a Modal call (video mocap can be slow)"
+        }
+    ]
+}
