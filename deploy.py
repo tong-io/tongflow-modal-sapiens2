@@ -129,7 +129,7 @@ class Inference:
             vis = rt.pose_visualize(self.hub, img, keypoints, scores)
             data = _png(vis)
         except Exception as e:
-            return ImagePoseOutput(success=False, error=str(e))
+            return ImagePoseOutput(success=False, error=f"{type(e).__name__}: {e}")
         return ImagePoseOutput(
             success=True, image=asset(data, mime="image/png", filename="pose.png")
         )
@@ -144,7 +144,7 @@ class Inference:
             vis = rt.seg_visualize(img, labels)
             data = _png(vis)
         except Exception as e:
-            return ImageBodySegOutput(success=False, error=str(e))
+            return ImageBodySegOutput(success=False, error=f"{type(e).__name__}: {e}")
         return ImageBodySegOutput(
             success=True, image=asset(data, mime="image/png", filename="body-seg.png")
         )
@@ -160,7 +160,7 @@ class Inference:
             vis = rt.normal_visualize(normal, mask)
             data = _png(vis)
         except Exception as e:
-            return ImageNormalOutput(success=False, error=str(e))
+            return ImageNormalOutput(success=False, error=f"{type(e).__name__}: {e}")
         return ImageNormalOutput(
             success=True, image=asset(data, mime="image/png", filename="normal.png")
         )
@@ -175,7 +175,7 @@ class Inference:
             rgba = rt.matting_rgba(fgr, alpha)
             data = _png(cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA))
         except Exception as e:
-            return ImageMattingOutput(success=False, error=str(e))
+            return ImageMattingOutput(success=False, error=f"{type(e).__name__}: {e}")
         return ImageMattingOutput(
             success=True, image=asset(data, mime="image/png", filename="matting.png")
         )
@@ -208,7 +208,7 @@ class Inference:
 
             data = point_cloud_glb(pts, colors)
         except Exception as e:
-            return ImageGenModelOutput(success=False, error=str(e))
+            return ImageGenModelOutput(success=False, error=f"{type(e).__name__}: {e}")
         return ImageGenModelOutput(
             success=True,
             model=asset(data, mime="model/gltf-binary", filename="pointmap.glb"),
@@ -222,7 +222,7 @@ class Inference:
             video = prompt_media_to_bytes(input.video)
             data = mocap_pipeline.capture(self.hub, video, progress=print)
         except Exception as e:
-            return VideoGenModelOutput(success=False, error=str(e))
+            return VideoGenModelOutput(success=False, error=f"{type(e).__name__}: {e}")
         return VideoGenModelOutput(
             success=True,
             model=asset(data, mime="model/gltf-binary", filename="mocap.glb"),

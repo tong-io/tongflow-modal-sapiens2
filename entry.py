@@ -192,7 +192,11 @@ def main() -> int:
     except SystemExit:
         raise
     except Exception as e:  # surfaced to the UI as an ABI failure
-        sys.stdout.write(json.dumps({"success": False, "error": str(e)}))
+        # Include the type: bare TimeoutError/AssertionError stringify to "",
+        # which the platform collapses into an unactionable "Task failed".
+        sys.stdout.write(
+            json.dumps({"success": False, "error": f"{type(e).__name__}: {e}"})
+        )
         sys.stdout.flush()
         return 1
 
