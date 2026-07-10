@@ -73,10 +73,11 @@ _FACE = {
     "eyelid_lower_left": "l_centerpoint_of_lower_eyelid_line",
     "eyelid_upper_right": "r_centerpoint_of_upper_eyelid_line",
     "eyelid_lower_right": "r_centerpoint_of_lower_eyelid_line",
-    "mouth_left": "left_mouth_corner",
-    "mouth_right": "right_mouth_corner",
-    "lip_upper": "center_of_upper_lip",
-    "lip_lower": "center_of_lower_lip",
+    "mouth_left": "l_outer_corner_of_mouth",
+    "mouth_right": "r_outer_corner_of_mouth",
+    # No center_of_upper_outer_lip in Goliath; use its middle midpoint.
+    "lip_upper": "midpoint_1_of_upper_outer_lip",
+    "lip_lower": "center_of_lower_outer_lip",
 }
 
 
