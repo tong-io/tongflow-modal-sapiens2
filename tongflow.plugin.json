@@ -17,12 +17,6 @@
             "description": "Modal token secret (paired with MODAL_TOKEN_ID)"
         },
         {
-            "key": "HF_TOKEN",
-            "required": false,
-            "description": "Optional Hugging Face token; only needed when overriding SAM_3D_BODY_MODEL to the gated official repo",
-            "url": "https://huggingface.co/facebook/sam-3d-body-dinov3"
-        },
-        {
             "key": "TONGFLOW_MODAL_CALL_TIMEOUT_S",
             "default": "3600",
             "description": "Max seconds to wait for a Modal call (video mocap can be slow)"

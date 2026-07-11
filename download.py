@@ -5,10 +5,7 @@ Run:
 
 Fetches the native-format 1B task checkpoints (each HF repo also carries a
 duplicate transformers-format ``model.safetensors`` which the plugin does not
-use), the DETR person detector, and — when the gated-access request has been
-approved — the SAM 3D Body mocap engine (facebook/sam-3d-body-dinov3, manual
-review by Meta) plus the MoGe-2 FOV estimator, into the shared ``models``
-volume.
+use), and the DETR person detector into the shared ``models`` volume.
 
 Self-contained: do not import other local modules.
 """
@@ -22,12 +19,8 @@ import modal
 MODEL_SIZE = "1b"
 TASKS = ("pose", "seg", "normal", "pointmap", "matting")
 DETECTOR_REPO = "facebook/detr-resnet-101-dc5"
-# Mocap body engine — ungated mirror of facebook/sam-3d-body-dinov3.
-SAM3D_REPO = os.environ.get("SAM_3D_BODY_MODEL", "jetjodh/sam-3d-body-dinov3")
-MOGE_REPO = "Ruicheng/moge-2-vitl-normal"
 
 volume = modal.Volume.from_name("models", create_if_missing=True)
-secrets = modal.Secret.from_dict({"HF_TOKEN": os.environ.get("HF_TOKEN", "")})
 model_downloader = modal.App("model_downloader")
 
 
@@ -36,7 +29,6 @@ model_downloader = modal.App("model_downloader")
     .pip_install("huggingface_hub==1.6.0")
     .env({"HF_HOME": "/models/hf"}),
     volumes={"/models": volume},
-    secrets=[secrets],
     timeout=7200,
 )
 def _download() -> None:
@@ -56,10 +48,6 @@ def _download() -> None:
         local_dir="/models/sapiens2/detector/detr-resnet-101-dc5",
     )
     print(f"Cached {DETECTOR_REPO}")
-
-    for repo in (SAM3D_REPO, MOGE_REPO):
-        snapshot_download(repo_id=repo)
-        print(f"Cached {repo}")
 
     volume.commit()
 

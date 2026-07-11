@@ -29,9 +29,10 @@ from mocap_pipeline import (
 )
 
 MHR_LOD = int(os.environ.get("MHR_LOD", "3"))
-MHR_NPZ = os.environ.get(
-    "MHR_NPZ",
-    f"{os.environ.get('SAPIENS2_WEIGHTS', '/models/sapiens2')}/mhr/mhr_lod{MHR_LOD}.npz",
+MHR_NPZ = os.environ.get("MHR_NPZ", f"/models/mhr/mhr_lod{MHR_LOD}.npz")
+# Legacy location used before the bundle became plugin-neutral.
+MHR_NPZ_FALLBACK = (
+    f"{os.environ.get('SAPIENS2_WEIGHTS', '/models/sapiens2')}/mhr/mhr_lod{MHR_LOD}.npz"
 )
 # Momentum works in centimeters; export in meters.
 MHR_SCALE = float(os.environ.get("MHR_SCALE", "0.01"))
@@ -74,7 +75,8 @@ _REST_FALLBACK = {"left_heel": "l_foot", "right_heel": "r_foot"}
 
 @lru_cache(maxsize=1)
 def load_character() -> dict:
-    d = np.load(MHR_NPZ, allow_pickle=False)
+    path = MHR_NPZ if os.path.exists(MHR_NPZ) else MHR_NPZ_FALLBACK
+    d = np.load(path, allow_pickle=False)
     names = [str(n) for n in d["joint_names"]]
     char = {
         "names": names,
