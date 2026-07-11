@@ -33,15 +33,18 @@ from mocap_retarget import JAW_ENABLED, JAW_MAX_RAD, MHR_SCALE, load_character
 
 MOCAP_BATCH = int(os.environ.get("MOCAP_BATCH", "4"))
 EXPR_ENABLED = os.environ.get("MOCAP_EXPR", "1") != "0"
-# Cam->glTF axis flip (y-down/z-forward -> y-up), as a quaternion conjugation.
+# SAM 3D Body's mhr_head flips vertices/joint-coords/cam_t into its camera
+# convention with y,z *= -1, but joint_global_rots stay in MHR model space
+# (y-up — the same space as our exported character). So rotations pass
+# through unchanged and positions get un-flipped with this.
 _FLIP = np.diag([1.0, -1.0, -1.0])
 
 
-def _mat_to_quat_flipped(mats: np.ndarray) -> np.ndarray:
-    """(J, 3, 3) camera-frame rotations -> (J, 4) world-frame quats."""
+def _mats_to_quats(mats: np.ndarray) -> np.ndarray:
+    """(J, 3, 3) MHR-model-space rotations -> (J, 4) quats, as-is."""
     out = np.zeros((len(mats), 4))
     for j, m in enumerate(mats):
-        out[j] = _quat_from_matrix(_FLIP @ m @ _FLIP)
+        out[j] = _quat_from_matrix(m)
     return out
 
 
@@ -66,9 +69,9 @@ def _resolve_convention(char, sample: dict) -> bool:
     Verified against the model's own pred_joint_coords: FK the skeleton under
     both interpretations and keep whichever reproduces the coordinates better.
     """
-    coords = sample["joint_coords"] @ _FLIP.T
+    coords = sample["joint_coords"] @ _FLIP.T  # un-flip back to model space
     root = coords[char["by_name"]["root"]]
-    quats_abs = _mat_to_quat_flipped(sample["global_rots"])
+    quats_abs = _mats_to_quats(sample["global_rots"])
     quats_delta = np.array(
         [_quat_mul(q, r) for q, r in zip(quats_abs, char["rest_rot"])]
     )
@@ -119,7 +122,7 @@ def capture_hybrid(hub: rt.ModelHub, video_bytes: bytes, progress=None) -> bytes
             )
         if convention_absolute is None:
             convention_absolute = _resolve_convention(char, person)
-        q = _mat_to_quat_flipped(person["global_rots"])
+        q = _mats_to_quats(person["global_rots"])
         if not convention_absolute:
             q = np.array([_quat_mul(qq, r) for qq, r in zip(q, rest_rot)])
         quats[f] = q
