@@ -92,7 +92,8 @@ image = (
         "webdataset",
         "roma",
         "joblib",
-        "xtcocotools",
+        # xtcocotools deliberately omitted: sdist-only on py3.12 (build needs
+        # numpy in isolation) and unused by sam-3d-body inference.
         "loguru",
         "optree",
         "fvcore",
