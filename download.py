@@ -22,8 +22,8 @@ import modal
 MODEL_SIZE = "1b"
 TASKS = ("pose", "seg", "normal", "pointmap", "matting")
 DETECTOR_REPO = "facebook/detr-resnet-101-dc5"
-# Mocap body engine (gated: requires an approved access request on HF).
-SAM3D_REPO = os.environ.get("SAM_3D_BODY_MODEL", "facebook/sam-3d-body-dinov3")
+# Mocap body engine — ungated mirror of facebook/sam-3d-body-dinov3.
+SAM3D_REPO = os.environ.get("SAM_3D_BODY_MODEL", "jetjodh/sam-3d-body-dinov3")
 MOGE_REPO = "Ruicheng/moge-2-vitl-normal"
 
 volume = modal.Volume.from_name("models", create_if_missing=True)
@@ -57,21 +57,9 @@ def _download() -> None:
     )
     print(f"Cached {DETECTOR_REPO}")
 
-    # Gated mocap weights: tolerate a pending/denied access request so the
-    # five image slots never get blocked by the mocap engine's gate. The
-    # hybrid mocap engine falls back to the geometric pipeline until these
-    # are available.
     for repo in (SAM3D_REPO, MOGE_REPO):
-        try:
-            snapshot_download(repo_id=repo)
-            print(f"Cached {repo}")
-        except Exception as e:  # 403 while Meta reviews the access request
-            print(
-                f"WARNING: could not cache {repo}: {e}\n"
-                "If this is a 403, the Hugging Face gated-access request is "
-                "still awaiting approval; video mocap will use the fallback "
-                "engine until then."
-            )
+        snapshot_download(repo_id=repo)
+        print(f"Cached {repo}")
 
     volume.commit()
 

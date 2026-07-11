@@ -18,8 +18,8 @@
         },
         {
             "key": "HF_TOKEN",
-            "required": true,
-            "description": "Hugging Face token of an account granted access to facebook/sam-3d-body-dinov3 (used by the video motion-capture body engine)",
+            "required": false,
+            "description": "Optional Hugging Face token; only needed when overriding SAM_3D_BODY_MODEL to the gated official repo",
             "url": "https://huggingface.co/facebook/sam-3d-body-dinov3"
         },
         {

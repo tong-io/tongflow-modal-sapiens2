@@ -321,7 +321,9 @@ def matting_infer(
 
 # ------------------------------------------------------- SAM 3D Body engine
 
-SAM3DBODY_MODEL = os.environ.get("SAM_3D_BODY_MODEL", "facebook/sam-3d-body-dinov3")
+# Ungated mirror of facebook/sam-3d-body-dinov3 (the official repo is
+# manual-gated); same file layout. Override via env to use the official one.
+SAM3DBODY_MODEL = os.environ.get("SAM_3D_BODY_MODEL", "jetjodh/sam-3d-body-dinov3")
 SAM3DBODY_BBOX_THR = float(os.environ.get("SAM_3D_BODY_BBOX_THRESHOLD", "0.5"))
 
 

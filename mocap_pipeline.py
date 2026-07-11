@@ -308,21 +308,7 @@ def capture(hub: rt.ModelHub, video_bytes: bytes, progress=None) -> bytes:
     ):
         import mocap_hybrid
 
-        try:
-            rt.sam3d_engine().get()  # boot (downloads gated weights on first use)
-        except Exception as e:
-            # Typically a HF 403 while Meta reviews the gated-access request
-            # for facebook/sam-3d-body-dinov3. Degrade loudly, don't fail.
-            msg = (
-                "mocap: SAM 3D Body engine unavailable "
-                f"({type(e).__name__}: {str(e)[:160]}) — falling back to the "
-                "Sapiens2 geometric engine"
-            )
-            print(msg)
-            if progress is not None:
-                progress(msg)
-        else:
-            return mocap_hybrid.capture_hybrid(hub, video_bytes, progress)
+        return mocap_hybrid.capture_hybrid(hub, video_bytes, progress)
 
     report("mocap: extracting frames")
     frames, fps = extract_frames(video_bytes)
