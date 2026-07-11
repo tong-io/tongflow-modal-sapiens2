@@ -314,6 +314,84 @@ def matting_infer(
     return fgr, alpha
 
 
+# ------------------------------------------------------- SAM 3D Body engine
+
+SAM3DBODY_MODEL = os.environ.get("SAM_3D_BODY_MODEL", "facebook/sam-3d-body-dinov3")
+SAM3DBODY_BBOX_THR = float(os.environ.get("SAM_3D_BODY_BBOX_THRESHOLD", "0.5"))
+
+
+class Sam3DBodyEngine:
+    """Per-frame MHR regression via Meta SAM 3D Body (body + hands + face).
+
+    Loaded lazily — the estimator stack (ViTDet-H detector, MoGe-2 FOV,
+    SAM 3D Body) costs ~9 GB of VRAM on top of the Sapiens2 models.
+    """
+
+    def __init__(self) -> None:
+        self._estimator = None
+
+    def get(self):
+        if self._estimator is None:
+            from sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body_hf
+            from tools.build_detector import HumanDetector
+            from tools.build_fov_estimator import FOVEstimator
+
+            model, model_cfg = load_sam_3d_body_hf(SAM3DBODY_MODEL, device="cuda")
+            self._estimator = SAM3DBodyEstimator(
+                sam_3d_body_model=model,
+                model_cfg=model_cfg,
+                human_detector=HumanDetector(name="vitdet", device="cuda"),
+                human_segmentor=None,
+                fov_estimator=FOVEstimator(name="moge2", device="cuda"),
+            )
+        return self._estimator
+
+    def infer_frame(
+        self, image_bgr: np.ndarray, prev_bbox: np.ndarray | None
+    ) -> dict | None:
+        """Run on one frame; return the tracked person's MHR state or None."""
+        estimator = self.get()
+        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        outputs = estimator.process_one_image(rgb, bbox_thr=SAM3DBODY_BBOX_THR)
+        if not outputs:
+            return None
+
+        def iou(a, b):
+            x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+            x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+            inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+            union = (
+                (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+            )
+            return inter / max(union, 1e-9)
+
+        if prev_bbox is not None:
+            person = max(outputs, key=lambda o: iou(prev_bbox, o["bbox"]))
+        else:
+            person = max(
+                outputs,
+                key=lambda o: (o["bbox"][2] - o["bbox"][0])
+                * (o["bbox"][3] - o["bbox"][1]),
+            )
+        return {
+            "bbox": np.asarray(person["bbox"], dtype=np.float32),
+            "global_rots": np.asarray(person["pred_global_rots"], dtype=np.float64),
+            "joint_coords": np.asarray(person["pred_joint_coords"], dtype=np.float64),
+            "cam_t": np.asarray(person["pred_cam_t"], dtype=np.float64),
+            "expr": np.asarray(person["expr_params"], dtype=np.float64).reshape(-1),
+        }
+
+
+_SAM3D_ENGINE: Sam3DBodyEngine | None = None
+
+
+def sam3d_engine() -> Sam3DBodyEngine:
+    global _SAM3D_ENGINE
+    if _SAM3D_ENGINE is None:
+        _SAM3D_ENGINE = Sam3DBodyEngine()
+    return _SAM3D_ENGINE
+
+
 # ------------------------------------------------------------- batched (video)
 
 

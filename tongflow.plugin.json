@@ -17,6 +17,12 @@
             "description": "Modal token secret (paired with MODAL_TOKEN_ID)"
         },
         {
+            "key": "HF_TOKEN",
+            "required": true,
+            "description": "Hugging Face token of an account granted access to facebook/sam-3d-body-dinov3 (used by the video motion-capture body engine)",
+            "url": "https://huggingface.co/facebook/sam-3d-body-dinov3"
+        },
+        {
             "key": "TONGFLOW_MODAL_CALL_TIMEOUT_S",
             "default": "3600",
             "description": "Max seconds to wait for a Modal call (video mocap can be slow)"

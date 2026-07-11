@@ -46,7 +46,9 @@ def _extract() -> None:
     print("assets:", sorted(p.name for p in assets.iterdir()))
 
     character = pym_geometry.Character.load_fbx(
-        get_mhr_fbx_path(assets, LOD), get_mhr_model_path(assets)
+        get_mhr_fbx_path(assets, LOD),
+        get_mhr_model_path(assets),
+        load_blendshapes=True,
     )
 
     skel = character.skeleton
@@ -89,10 +91,16 @@ def _extract() -> None:
     weights = np.asarray(sw.weight, dtype=np.float32)  # (V, K)
     indices = np.asarray(sw.index, dtype=np.int32)  # (V, K)
 
+    # 117 blendshapes = 45 identity + 72 face expressions; keep the face set
+    # (drives glTF morph targets from per-frame expression coefficients).
+    shape_vectors = np.asarray(character.blend_shape.shape_vectors, dtype=np.float32)
+    face_shapes = shape_vectors[45:117]
+
     out_dir = Path("/models/sapiens2/mhr")
     out_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         out_dir / f"mhr_lod{LOD}.npz",
+        face_shape_vectors=face_shapes,
         joint_names=np.asarray(names),
         parents=parents,
         offsets=offsets,

@@ -70,6 +70,26 @@ class _Builder:
         self.accessors.append(acc)
         return len(self.accessors) - 1
 
+    def add_sparse_vec3(
+        self, count: int, indices: np.ndarray, values: np.ndarray
+    ) -> int:
+        """VEC3 float accessor of `count` elements, zero except at `indices`."""
+        idx_view = self.add_view(indices.astype(np.uint32).tobytes())
+        val_view = self.add_view(values.astype(np.float32).tobytes())
+        self.accessors.append(
+            {
+                "componentType": _COMP_F32,
+                "count": int(count),
+                "type": "VEC3",
+                "sparse": {
+                    "count": int(len(indices)),
+                    "indices": {"bufferView": idx_view, "componentType": 5125},
+                    "values": {"bufferView": val_view},
+                },
+            }
+        )
+        return len(self.accessors) - 1
+
     def finish(self, gltf: dict) -> bytes:
         self._pad()
         gltf["buffers"] = [{"byteLength": len(self.blob)}]
@@ -304,6 +324,8 @@ def skinned_character_glb(
     rotation_channels: dict[int, np.ndarray],  # joint -> (F, 4)
     translation_channels: dict[int, np.ndarray],  # joint -> (F, 3)
     times: np.ndarray,
+    morph_targets: np.ndarray | None = None,  # (T, V, 3) deltas, bind space
+    morph_weights: np.ndarray | None = None,  # (F, T)
     color: tuple[float, float, float, float] = (0.62, 0.71, 0.83, 1.0),
 ) -> bytes:
     """Skinned character with a full bind pose (rotations included) + clip."""
@@ -374,6 +396,27 @@ def skinned_character_glb(
             }
         )
 
+    # Face expressions as sparse morph targets + a weights track on the mesh.
+    targets_json: list[dict] | None = None
+    if morph_targets is not None and len(morph_targets):
+        targets_json = []
+        vcount = len(vertices)
+        for t in morph_targets:
+            nz = np.where(np.abs(t).max(axis=1) > 1e-5)[0]
+            targets_json.append(
+                {"POSITION": b.add_sparse_vec3(vcount, nz, t[nz])}
+            )
+        if morph_weights is not None:
+            out = b.add_accessor(
+                morph_weights.astype(np.float32).reshape(-1, 1), _COMP_F32, "SCALAR"
+            )
+            samplers.append(
+                {"input": t_acc, "interpolation": "LINEAR", "output": out}
+            )
+            channels.append(
+                {"sampler": len(samplers) - 1, "target": {"node": n, "path": "weights"}}
+            )
+
     gltf = {
         "asset": {"version": "2.0", "generator": "tongflow-modal-sapiens2"},
         "scene": 0,
@@ -391,8 +434,12 @@ def skinned_character_glb(
                         "indices": idx_acc,
                         "material": 0,
                         "mode": 4,
+                        **({"targets": targets_json} if targets_json else {}),
                     }
-                ]
+                ],
+                **(
+                    {"weights": [0.0] * len(targets_json)} if targets_json else {}
+                ),
             }
         ],
         "materials": [

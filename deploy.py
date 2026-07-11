@@ -42,12 +42,22 @@ REPO_URL = "https://github.com/facebookresearch/sapiens2.git"
 REPO_REV = "7e5bae88456ac418ff0e58e74106c9fe192055d4"
 REPO_DIR = "/app/sapiens2"
 
+# SAM 3D Body: the default mocap body engine (regresses the MHR rig per
+# frame). Same pin as the tongflow-modal-sam-3d-body plugin.
+SAM3D_URL = "https://github.com/facebookresearch/sam-3d-body.git"
+SAM3D_REV = "b5c765a0d89d789985e186d396315e7590887b94"
+SAM3D_DIR = "/app/sam-3d-body"
+
 # Point-cloud density cap for the pointmap slot — NOT an ABI field.
 POINTMAP_MAX_POINTS = 400_000
 
 _HERE = Path(__file__).resolve().parent
 
 volume = modal.Volume.from_name("models", create_if_missing=True)
+# The SAM 3D Body checkpoint is gated on Hugging Face: accept the terms on
+# facebook/sam-3d-body-dinov3, then put that account's HF_TOKEN in TongFlow
+# Settings before first mocap use.
+secrets = modal.Secret.from_dict({"HF_TOKEN": os.environ.get("HF_TOKEN", "")})
 
 app = modal.App(_HERE.name)
 
@@ -55,7 +65,8 @@ image = (
     modal.Image.from_registry(
         "nvidia/cuda:12.8.1-devel-ubuntu22.04", add_python="3.12"
     )
-    .apt_install("git", "libgl1", "libglib2.0-0", "ffmpeg")
+    .apt_install("git", "clang", "libgl1", "libglib2.0-0", "ffmpeg")
+    .env({"TORCH_CUDA_ARCH_LIST": "8.6;8.9;9.0"})
     .pip_install(
         "torch==2.7.1",
         "torchvision==0.22.1",
@@ -66,14 +77,50 @@ image = (
         f"git -C {REPO_DIR} checkout {REPO_REV}",
         f"pip install -e {REPO_DIR}",
     )
+    # --- SAM 3D Body stack (same recipe as tongflow-modal-sam-3d-body) ---
+    .pip_install(
+        "pytorch-lightning",
+        "pyrender",
+        "yacs",
+        "scikit-image",
+        "einops",
+        "dill",
+        "pandas",
+        "hydra-core",
+        "hydra-colorlog",
+        "pyrootutils",
+        "webdataset",
+        "roma",
+        "joblib",
+        "xtcocotools",
+        "loguru",
+        "optree",
+        "fvcore",
+        "pycocotools",
+        "huggingface_hub",
+        "trimesh",
+    )
+    # wheel/ninja must predate detectron2: --no-build-isolation reuses the
+    # ambient env.
+    .pip_install("wheel", "setuptools", "ninja")
+    .pip_install(
+        "git+https://github.com/facebookresearch/detectron2.git@a1ce2f9",
+        extra_options="--no-build-isolation --no-deps",
+    )
+    .pip_install("git+https://github.com/microsoft/MoGe.git")
+    .run_commands(
+        f"git clone {SAM3D_URL} {SAM3D_DIR}",
+        f"git -C {SAM3D_DIR} checkout {SAM3D_REV}",
+    )
     .pip_install("tongflow==0.2.6")
     .env(
         {
             "HF_HOME": "/models/hf",
+            "FVCORE_CACHE": "/models/fvcore",
             "SAPIENS2_REPO": REPO_DIR,
             "SAPIENS2_WEIGHTS": "/models/sapiens2",
             "SAPIENS2_DETECTOR": "/models/sapiens2/detector/detr-resnet-101-dc5",
-            "PYTHONPATH": "/opt/sapiens2_plugin",
+            "PYTHONPATH": f"/opt/sapiens2_plugin:{SAM3D_DIR}",
         }
     )
     # Mounted at runtime (copy defaults to False) so every deploy ships the
@@ -81,6 +128,7 @@ image = (
     .add_local_file(str(_HERE / "sapiens2_runtime.py"), "/opt/sapiens2_plugin/sapiens2_runtime.py")
     .add_local_file(str(_HERE / "mocap_pipeline.py"), "/opt/sapiens2_plugin/mocap_pipeline.py")
     .add_local_file(str(_HERE / "mocap_retarget.py"), "/opt/sapiens2_plugin/mocap_retarget.py")
+    .add_local_file(str(_HERE / "mocap_hybrid.py"), "/opt/sapiens2_plugin/mocap_hybrid.py")
     .add_local_file(str(_HERE / "gltf_writer.py"), "/opt/sapiens2_plugin/gltf_writer.py")
 )
 
@@ -114,6 +162,7 @@ def _png(image_bgr_or_bgra: "np.ndarray") -> bytes:
     gpu=os.environ.get("SAPIENS2_GPU", "L40S"),
     memory=32768,
     volumes={"/models": volume},
+    secrets=[secrets],
     timeout=3600,
     scaledown_window=300,
 )

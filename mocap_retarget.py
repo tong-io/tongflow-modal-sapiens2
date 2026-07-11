@@ -86,6 +86,12 @@ def load_character() -> dict:
         "faces": d["faces"],
         "skin_weights": d["skin_weights"],
         "skin_indices": d["skin_indices"],
+        # 72 face-expression blendshape deltas (bundle v3+); None on old bundles.
+        "face_shapes": (
+            d["face_shape_vectors"] * MHR_SCALE
+            if "face_shape_vectors" in d.files
+            else None
+        ),
     }
     return char
 

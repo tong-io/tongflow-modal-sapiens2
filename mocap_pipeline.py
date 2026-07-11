@@ -299,6 +299,17 @@ def capture(hub: rt.ModelHub, video_bytes: bytes, progress=None) -> bytes:
         if progress is not None:
             progress(msg)
 
+    # Body engine: "sam3dbody" (default) regresses the MHR rig per frame via
+    # SAM 3D Body and uses Sapiens2 for face refinement; "sapiens2" is the
+    # pure geometric pipeline below (keypoints + pointmap lifting).
+    if (
+        os.environ.get("MOCAP_BODY_ENGINE", "sam3dbody") == "sam3dbody"
+        and os.environ.get("MOCAP_STYLE", "mhr") == "mhr"
+    ):
+        import mocap_hybrid
+
+        return mocap_hybrid.capture_hybrid(hub, video_bytes, progress)
+
     report("mocap: extracting frames")
     frames, fps = extract_frames(video_bytes)
     n_frames = len(frames)
