@@ -30,6 +30,9 @@ MOCAP_MAX_SECONDS = float(os.environ.get("MOCAP_MAX_SECONDS", "60"))
 MOCAP_BATCH = int(os.environ.get("MOCAP_BATCH", "4"))
 MOCAP_MAX_DIM = int(os.environ.get("MOCAP_MAX_DIM", "1920"))
 POSE_CONF_THR = float(os.environ.get("MOCAP_POSE_CONF_THR", "0.3"))
+# A keypoint must be confidently seen in at least this fraction of frames to
+# drive its bones; below that the bone holds its rest pose.
+MIN_VISIBILITY = float(os.environ.get("MOCAP_MIN_VISIBILITY", "0.3"))
 # One-Euro parameters (position smoothing, per joint channel)
 ONE_EURO_MIN_CUTOFF = float(os.environ.get("MOCAP_ONE_EURO_MIN_CUTOFF", "1.5"))
 ONE_EURO_BETA = float(os.environ.get("MOCAP_ONE_EURO_BETA", "0.3"))
@@ -336,8 +339,29 @@ def capture(hub: rt.ModelHub, video_bytes: bytes, progress=None) -> bytes:
             ok = conf[f] >= POSE_CONF_THR
             points_3d[f, ok] = sample[ok]
 
+    # Pointmap depth on small finger keypoints is noisy (background bleed):
+    # clamp each hand's depth to its wrist depth +- a hand-sized band.
+    for side in ("left", "right"):
+        wrist = name2id.get(f"{side}_wrist")
+        hand_ids = [
+            i
+            for n, i in name2id.items()
+            if n.startswith(f"{side}_") and ("finger" in n or "thumb" in n or "hand" in n)
+        ]
+        if wrist is None or not hand_ids:
+            continue
+        wz = points_3d[:, wrist, 2][:, None]
+        points_3d[:, hand_ids, 2] = np.clip(
+            points_3d[:, hand_ids, 2], wz - 0.2, wz + 0.2
+        )
+
     # Camera coords are y-down / z-forward; glTF wants y-up.
     points_3d *= np.array([1.0, -1.0, -1.0])
+
+    # Fraction of frames each keypoint was confidently observed. Keypoints
+    # that stay out of frame (e.g. legs in a head-and-shoulders video) must
+    # not drive bones — their tracks are extrapolation garbage.
+    visibility = (conf >= POSE_CONF_THR).mean(axis=0)
 
     report("mocap: smoothing and solving skeleton")
     points_3d = _interp_nan(points_3d)
@@ -348,9 +372,9 @@ def capture(hub: rt.ModelHub, video_bytes: bytes, progress=None) -> bytes:
         import mocap_retarget
 
         report("mocap: retargeting onto MHR")
-        glb = mocap_retarget.export_mhr_glb(points_3d, name2id, fps)
+        glb = mocap_retarget.export_mhr_glb(points_3d, name2id, fps, visibility)
     else:  # "skeleton": the plain bone-puppet exporter
-        glb = _solve_and_export(points_3d, name2id, fps)
+        glb = _solve_and_export(points_3d, name2id, fps, visibility)
     report("mocap: done")
     return glb
 
@@ -389,13 +413,34 @@ def _marker_positions(
 class SolvedSkeleton:
     """Result of the marker -> rotation solve, shared by both exporters."""
 
-    def __init__(self, bone_defs, index, tracks, rest, global_rot, markers):
+    def __init__(self, bone_defs, index, tracks, rest, global_rot, markers, driven):
         self.bone_defs = bone_defs  # [(bone, marker, parent-bone | None)]
         self.index = index  # bone name -> row
         self.tracks = tracks  # list of (F, 3) marker positions
         self.rest = rest  # (B, 3) rest positions
         self.global_rot = global_rot  # (F, B, 4) global quats vs rest
         self.markers = markers  # marker name -> (F, 3)
+        self.driven = driven  # (B,) bool: solved from observed markers
+
+
+def _marker_visibility(
+    visibility: np.ndarray | None, name2id: dict[str, int]
+) -> dict[str, float]:
+    """Per-marker observed fraction, incl. the virtual body markers."""
+    if visibility is None:
+        return {}
+    vis = {n: float(visibility[i]) for n, i in name2id.items()}
+
+    def lo(*names: str) -> float:
+        return min(vis.get(n, 0.0) for n in names)
+
+    vis["pelvis"] = lo("left_hip", "right_hip")
+    vis["neck"] = lo("left_shoulder", "right_shoulder")
+    vis["spine"] = min(vis["pelvis"], vis["neck"])
+    vis["head"] = (
+        lo("left_ear", "right_ear") if "left_ear" in name2id else vis.get("nose", 0.0)
+    )
+    return vis
 
 
 def solve_skeleton(
@@ -403,6 +448,7 @@ def solve_skeleton(
     name2id: dict[str, int],
     rest_positions: dict[str, np.ndarray] | None = None,
     head_rest_frame: tuple[np.ndarray, np.ndarray] | None = None,
+    visibility: np.ndarray | None = None,
 ) -> SolvedSkeleton:
     """Solve per-frame global joint rotations from 3D keypoints.
 
@@ -475,13 +521,29 @@ def solve_skeleton(
     ident = np.array([0.0, 0.0, 0.0, 1.0])
     global_rot = np.tile(ident, (n_frames, len(bone_defs), 1))
 
+    # A bone only gets a solved rotation when its own marker and its primary
+    # child's marker were actually observed; otherwise it inherits the parent
+    # (== holds its rest pose relative to it).
+    mvis = _marker_visibility(visibility, name2id)
+
+    def seen(marker: str) -> bool:
+        return visibility is None or mvis.get(marker, 0.0) >= MIN_VISIBILITY
+
+    driven = np.zeros(len(bone_defs), dtype=bool)
+
     head_markers = (
         ("nose" in markers, "left_ear" in markers and "right_ear" in markers)
     )
     for f in range(n_frames):
-        for i, (bone, _, parent) in enumerate(bone_defs):
+        for i, (bone, marker, parent) in enumerate(bone_defs):
             kids = children[i]
             if bone == "head" and head_markers[0] and head_markers[1]:
+                if not (seen("nose") and seen("left_ear") and seen("right_ear")):
+                    global_rot[f, i] = (
+                        global_rot[f, index[parent]] if parent is not None else ident
+                    )
+                    continue
+                driven[i] = True
                 # Skull orientation from the nose direction + ear line — the
                 # head bone is a leaf, so child bones can't orient it.
                 if head_rest_frame is not None:
@@ -503,25 +565,44 @@ def solve_skeleton(
                 prim = index[primary_child[bone]]
             else:
                 prim = kids[0]
+            if not (seen(marker) and seen(bone_defs[prim][1])):
+                global_rot[f, i] = (
+                    global_rot[f, index[parent]] if parent is not None else ident
+                )
+                continue
+            driven[i] = True
             p_rest = rest[prim] - rest[i]
             p_cur = tracks[prim][f] - tracks[i][f]
             if bone in triad_secondary:
                 a, c = triad_secondary[bone]
-                if a in index and c in index:
+                if (
+                    a in index
+                    and c in index
+                    and seen(bone_defs[index[a]][1])
+                    and seen(bone_defs[index[c]][1])
+                ):
                     s_rest = rest[index[a]] - rest[index[c]]
                     s_cur = tracks[index[a]][f] - tracks[index[c]][f]
                     global_rot[f, i] = _triad(p_rest, s_rest, p_cur, s_cur)
                     continue
             global_rot[f, i] = _quat_from_two_vectors(p_rest, p_cur)
 
-    return SolvedSkeleton(bone_defs, index, tracks, rest, global_rot, markers)
+    # A leaf is only as reliable as the joint it inherits from.
+    for i, (_, _, parent) in enumerate(bone_defs):
+        if not children[i] and parent is not None:
+            driven[i] = driven[index[parent]]
+
+    return SolvedSkeleton(bone_defs, index, tracks, rest, global_rot, markers, driven)
 
 
 def _solve_and_export(
-    points: np.ndarray, name2id: dict[str, int], fps: float
+    points: np.ndarray,
+    name2id: dict[str, int],
+    fps: float,
+    visibility: np.ndarray | None = None,
 ) -> bytes:
     n_frames = len(points)
-    solved = solve_skeleton(points, name2id)
+    solved = solve_skeleton(points, name2id, visibility=visibility)
     bone_defs = solved.bone_defs
     index = solved.index
     tracks = solved.tracks
@@ -529,8 +610,12 @@ def _solve_and_export(
     global_rot = solved.global_rot
     markers = solved.markers
 
+    mvis = _marker_visibility(visibility, name2id)
     face_bones: list[tuple[str, str]] = [
-        (bone, kp_name) for bone, kp_name in _FACE.items() if kp_name in markers
+        (bone, kp_name)
+        for bone, kp_name in _FACE.items()
+        if kp_name in markers
+        and (visibility is None or mvis.get(kp_name, 0.0) >= MIN_VISIBILITY)
     ]
 
     # Local rotations; keep quaternion sign continuity for clean LERP.
@@ -554,7 +639,14 @@ def _solve_and_export(
             rotations=local,
         )
         if parent is None:
-            j.translations = tracks[i].astype(np.float32)
+            # Root motion anchor: the pelvis when observed, else the neck
+            # (e.g. head-and-shoulders videos never see the hips).
+            anchor = (
+                tracks[i]
+                if solved.driven[i]
+                else rest[i] + (markers["neck"] - markers["neck"][0])
+            )
+            j.translations = anchor.astype(np.float32)
         joints.append(j)
 
     # Face channels: translation-animated leaves under the head, expressed in

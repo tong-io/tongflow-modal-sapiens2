@@ -20,6 +20,8 @@ import numpy as np
 
 from gltf_writer import skinned_character_glb
 from mocap_pipeline import (
+    MIN_VISIBILITY,
+    _marker_visibility,
     _quat_conj,
     _quat_mul,
     _quat_rotate,
@@ -115,7 +117,12 @@ def _body_axes(char: dict) -> tuple[np.ndarray, np.ndarray]:
     return fwd, left
 
 
-def export_mhr_glb(points: np.ndarray, name2id: dict[str, int], fps: float) -> bytes:
+def export_mhr_glb(
+    points: np.ndarray,
+    name2id: dict[str, int],
+    fps: float,
+    visibility: np.ndarray | None = None,
+) -> bytes:
     char = load_character()
     by_name = char["by_name"]
     parents = char["parents"]
@@ -138,16 +145,20 @@ def export_mhr_glb(points: np.ndarray, name2id: dict[str, int], fps: float) -> b
         rest_positions=rest_bones,
         # Head triad rest: nose points forward, ear line points left.
         head_rest_frame=(fwd * 0.1, left * 0.15),
+        visibility=visibility,
     )
     _ = head_pos
 
     # Per-frame global rotations for every MHR joint: mapped joints get the
     # solved delta applied to their bind rotation; unmapped joints keep their
-    # bind local rotation under the animated parent.
+    # bind local rotation under the animated parent. Bones the solver never
+    # observed (out-of-frame body parts) are left unmapped so the character
+    # holds its rest pose there.
     mhr_from_bone = {}
     for bone, mhr in BONE_TO_MHR.items():
-        if bone in solved.index:
-            mhr_from_bone[by_name[mhr]] = solved.index[bone]
+        i = solved.index.get(bone)
+        if i is not None and solved.driven[i]:
+            mhr_from_bone[by_name[mhr]] = i
 
     rest_local_rot = np.zeros((n_joints, 4))
     rest_local_pos = np.zeros((n_joints, 3))
@@ -175,8 +186,13 @@ def export_mhr_glb(points: np.ndarray, name2id: dict[str, int], fps: float) -> b
                 glob[f, j] = _quat_mul(glob[f, p], rest_local_rot[j])
 
     # Jaw open from the chin-to-nose distance, hinged on the current ear axis.
+    mvis = _marker_visibility(visibility, name2id)
+    face_seen = visibility is None or (
+        mvis.get("tip_of_chin", 0.0) >= MIN_VISIBILITY
+        and mvis.get("nose", 0.0) >= MIN_VISIBILITY
+    )
     jaw = by_name.get("c_jaw")
-    if JAW_ENABLED and jaw is not None:
+    if JAW_ENABLED and face_seen and jaw is not None:
         m = solved.markers
         if "tip_of_chin" in m and "nose" in m and "left_ear" in m:
             open_d = np.linalg.norm(m["tip_of_chin"] - m["nose"], axis=1)
@@ -208,10 +224,15 @@ def export_mhr_glb(points: np.ndarray, name2id: dict[str, int], fps: float) -> b
         local_anim[j] = local.astype(np.float32)
 
     root = by_name["root"]
-    pelvis_track = solved.tracks[solved.index["pelvis"]]
+    # Root motion anchor: pelvis when observed, else the neck (e.g. upper-body
+    # videos never see the hips).
+    if solved.driven[solved.index["pelvis"]]:
+        anchor_track = solved.tracks[solved.index["pelvis"]]
+    else:
+        anchor_track = solved.markers["neck"]
     root_parent = parents[root]
     root_trans = np.zeros((n_frames, 3), dtype=np.float32)
-    motion = pelvis_track - pelvis_track[0]  # relative subject motion, meters
+    motion = anchor_track - anchor_track[0]  # relative subject motion, meters
     for f in range(n_frames):
         base = rest_pos[root] + motion[f]
         if root_parent >= 0:
