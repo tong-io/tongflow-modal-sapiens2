@@ -214,9 +214,10 @@ def pose_visualize(
     from pose_render_utils import visualize_keypoints
 
     meta = hub.pose_meta
-    rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    # Result-only output: skeleton on a black canvas, not over the photo.
+    canvas = np.zeros_like(image_bgr)
     vis = visualize_keypoints(
-        image=rgb,
+        image=canvas,
         keypoints=keypoints,
         keypoints_visible=[np.ones_like(s) > 0 for s in scores],
         keypoint_scores=scores,
@@ -262,8 +263,12 @@ def seg_labels(hub: ModelHub, image_bgr: np.ndarray) -> np.ndarray:
 def seg_visualize(image_bgr: np.ndarray, labels: np.ndarray) -> np.ndarray:
     from sapiens.dense.visualizers import SegVisualizer
 
+    # Result-only output: the pure class-color map (the official
+    # _visualize_segmentation alpha-blends it over the photo).
     vis = SegVisualizer(class_palette_type=SEG_PALETTE, with_labels=False)
-    return vis._visualize_segmentation(image_bgr, labels)
+    palette_bgr = vis.class_palette[:, ::-1]
+    _ = image_bgr
+    return palette_bgr[labels].astype(np.uint8)
 
 
 def normal_map(hub: ModelHub, image_bgr: np.ndarray) -> np.ndarray:
