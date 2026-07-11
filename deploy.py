@@ -100,6 +100,11 @@ image = (
         "pycocotools",
         "huggingface_hub",
         "trimesh",
+        # detectron2 is installed with --no-deps below; these are its runtime
+        # dependencies not already pulled in by sapiens2.
+        "cloudpickle",
+        "tabulate",
+        "omegaconf",
     )
     # wheel/ninja must predate detectron2: --no-build-isolation reuses the
     # ambient env.
