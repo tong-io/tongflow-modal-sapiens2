@@ -9,7 +9,7 @@ Official [TongFlow](https://github.com/tong-io/tongflow) plugin. Human-centric v
 - **Surface normals** (`image-normal`) — per-pixel surface normal map, background masked via body-part segmentation.
 - **Human matting** (`image-matting`) — human foreground extraction as a straight-alpha transparent PNG.
 - **Image → 3D** (`image-gen-model`) — Sapiens2 pointmap turned into a colored, human-only 3D point cloud GLB.
-- **Video motion capture** (`video-gen-model`) — monocular video → skeletal-animation GLB. 2D pose is lifted to 3D by sampling the pointmap at each keypoint, One-Euro smoothed, and solved into a canonical skeleton: body + per-finger rotation channels, plus facial capture (jaw, brows, eyelids, lips) as translation-animated bones under the head. Single subject (largest person, IoU-tracked). Plays directly in the TongFlow model node; imports as an armature in Blender.
+- **Video motion capture** (`video-gen-model`) — monocular video → animated 3D human GLB. 2D pose is lifted to 3D by sampling the pointmap at each keypoint, One-Euro smoothed, solved into per-joint rotations (body + fingers + jaw), and retargeted onto **MHR** (Meta's Momentum Human Rig, Apache-2.0): a skinned full-body character mesh driven by the capture. Single subject (largest person, IoU-tracked). Plays directly in the TongFlow model node; imports as a skinned armature in Blender. Set `MOCAP_STYLE=skeleton` for the raw bone-puppet output instead; run `modal run extract_mhr.py::extract` once to (re)build the MHR bundle on the volume.
 
 ## Credentials
 

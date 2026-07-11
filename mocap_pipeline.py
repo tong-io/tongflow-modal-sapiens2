@@ -338,7 +338,14 @@ def capture(hub: rt.ModelHub, video_bytes: bytes, progress=None) -> bytes:
     points_3d = _interp_nan(points_3d)
     points_3d = one_euro(points_3d, fps)
 
-    glb = _solve_and_export(points_3d, name2id, fps)
+    style = os.environ.get("MOCAP_STYLE", "mhr")
+    if style == "mhr":
+        import mocap_retarget
+
+        report("mocap: retargeting onto MHR")
+        glb = mocap_retarget.export_mhr_glb(points_3d, name2id, fps)
+    else:  # "skeleton": the plain bone-puppet exporter
+        glb = _solve_and_export(points_3d, name2id, fps)
     report("mocap: done")
     return glb
 
@@ -374,9 +381,32 @@ def _marker_positions(
     return m
 
 
-def _solve_and_export(
-    points: np.ndarray, name2id: dict[str, int], fps: float
-) -> bytes:
+class SolvedSkeleton:
+    """Result of the marker -> rotation solve, shared by both exporters."""
+
+    def __init__(self, bone_defs, index, tracks, rest, global_rot, markers):
+        self.bone_defs = bone_defs  # [(bone, marker, parent-bone | None)]
+        self.index = index  # bone name -> row
+        self.tracks = tracks  # list of (F, 3) marker positions
+        self.rest = rest  # (B, 3) rest positions
+        self.global_rot = global_rot  # (F, B, 4) global quats vs rest
+        self.markers = markers  # marker name -> (F, 3)
+
+
+def solve_skeleton(
+    points: np.ndarray,
+    name2id: dict[str, int],
+    rest_positions: dict[str, np.ndarray] | None = None,
+    head_rest_frame: tuple[np.ndarray, np.ndarray] | None = None,
+) -> SolvedSkeleton:
+    """Solve per-frame global joint rotations from 3D keypoints.
+
+    ``rest_positions`` overrides the rest pose per bone (e.g. with a target
+    character's bind pose so the rotations retarget directly); by default the
+    rest pose is derived from frame 0 with median bone lengths.
+    ``head_rest_frame`` supplies (nose-direction, ear-line) rest vectors for
+    the head triad when the rest pose is not frame-0-derived.
+    """
     n_frames = len(points)
     markers = _marker_positions(points, name2id)
 
@@ -394,26 +424,27 @@ def _solve_and_export(
             if kp_name in markers and parent in chain_names:
                 bone_defs.append((bone, kp_name, parent))
                 chain_names.add(bone)
-    face_bones: list[tuple[str, str]] = [
-        (bone, kp_name) for bone, kp_name in _FACE.items() if kp_name in markers
-    ]
 
     index: dict[str, int] = {b: i for i, (b, _, _) in enumerate(bone_defs)}
     tracks = [markers[m] for _, m, _ in bone_defs]  # list of (F, 3)
 
-    # Rest pose: median-length bones along frame-0 directions keep proportions
-    # stable; positions come from the first frame.
     rest = np.zeros((len(bone_defs), 3))
-    rest[0] = tracks[0][0]
-    for i, (_, _, parent) in enumerate(bone_defs):
-        if parent is None:
-            continue
-        p = index[parent]
-        offsets = tracks[i] - tracks[p]
-        length = float(np.median(np.linalg.norm(offsets, axis=1)))
-        d0 = offsets[0]
-        d0 /= max(np.linalg.norm(d0), 1e-9)
-        rest[i] = rest[p] + d0 * length
+    if rest_positions is not None:
+        for i, (bone, _, _) in enumerate(bone_defs):
+            rest[i] = rest_positions[bone]
+    else:
+        # Rest pose: median-length bones along frame-0 directions keep
+        # proportions stable; positions come from the first frame.
+        rest[0] = tracks[0][0]
+        for i, (_, _, parent) in enumerate(bone_defs):
+            if parent is None:
+                continue
+            p = index[parent]
+            offsets = tracks[i] - tracks[p]
+            length = float(np.median(np.linalg.norm(offsets, axis=1)))
+            d0 = offsets[0]
+            d0 /= max(np.linalg.norm(d0), 1e-9)
+            rest[i] = rest[p] + d0 * length
 
     # Secondary-axis pairs for stable twist at multi-child joints.
     triad_secondary = {
@@ -448,9 +479,12 @@ def _solve_and_export(
             if bone == "head" and head_markers[0] and head_markers[1]:
                 # Skull orientation from the nose direction + ear line — the
                 # head bone is a leaf, so child bones can't orient it.
-                p_rest = markers["nose"][0] - rest[i]
+                if head_rest_frame is not None:
+                    p_rest, s_rest = head_rest_frame
+                else:
+                    p_rest = markers["nose"][0] - rest[i]
+                    s_rest = markers["left_ear"][0] - markers["right_ear"][0]
                 p_cur = markers["nose"][f] - tracks[i][f]
-                s_rest = markers["left_ear"][0] - markers["right_ear"][0]
                 s_cur = markers["left_ear"][f] - markers["right_ear"][f]
                 global_rot[f, i] = _triad(p_rest, s_rest, p_cur, s_cur)
                 continue
@@ -474,6 +508,25 @@ def _solve_and_export(
                     global_rot[f, i] = _triad(p_rest, s_rest, p_cur, s_cur)
                     continue
             global_rot[f, i] = _quat_from_two_vectors(p_rest, p_cur)
+
+    return SolvedSkeleton(bone_defs, index, tracks, rest, global_rot, markers)
+
+
+def _solve_and_export(
+    points: np.ndarray, name2id: dict[str, int], fps: float
+) -> bytes:
+    n_frames = len(points)
+    solved = solve_skeleton(points, name2id)
+    bone_defs = solved.bone_defs
+    index = solved.index
+    tracks = solved.tracks
+    rest = solved.rest
+    global_rot = solved.global_rot
+    markers = solved.markers
+
+    face_bones: list[tuple[str, str]] = [
+        (bone, kp_name) for bone, kp_name in _FACE.items() if kp_name in markers
+    ]
 
     # Local rotations; keep quaternion sign continuity for clean LERP.
     joints: list[Joint] = []

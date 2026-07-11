@@ -278,6 +278,145 @@ def skeleton_animation_glb(
     return b.finish(gltf)
 
 
+def _quat_to_mat3(q: np.ndarray) -> np.ndarray:
+    x, y, z, w = q
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+
+def skinned_character_glb(
+    *,
+    vertices: np.ndarray,  # (V, 3) model-space bind pose
+    faces: np.ndarray,  # (T, 3)
+    joints_weights: np.ndarray,  # (V, 4) float
+    joints_indices: np.ndarray,  # (V, 4) uint16
+    joint_names: list[str],
+    parents: np.ndarray,  # (J,) int, -1 for root
+    rest_local_pos: np.ndarray,  # (J, 3)
+    rest_local_rot: np.ndarray,  # (J, 4) xyzw
+    rest_global_pos: np.ndarray,  # (J, 3)
+    rest_global_rot: np.ndarray,  # (J, 4) xyzw
+    rotation_channels: dict[int, np.ndarray],  # joint -> (F, 4)
+    translation_channels: dict[int, np.ndarray],  # joint -> (F, 3)
+    times: np.ndarray,
+    color: tuple[float, float, float, float] = (0.62, 0.71, 0.83, 1.0),
+) -> bytes:
+    """Skinned character with a full bind pose (rotations included) + clip."""
+    n = len(joint_names)
+    b = _Builder()
+
+    pos_acc = b.add_accessor(
+        vertices.astype(np.float32), _COMP_F32, "VEC3", target=34962, minmax=True
+    )
+    idx_acc = b.add_accessor(
+        faces.astype(np.uint32).reshape(-1, 1), 5125, "SCALAR", target=34963
+    )
+    jnt_acc = b.add_accessor(
+        joints_indices.astype(np.uint16), _COMP_U16, "VEC4", target=34962
+    )
+    wgt_acc = b.add_accessor(
+        joints_weights.astype(np.float32), _COMP_F32, "VEC4", target=34962
+    )
+
+    ibm = np.zeros((n, 16), dtype=np.float32)
+    for j in range(n):
+        rot = _quat_to_mat3(rest_global_rot[j])
+        m = np.eye(4)
+        m[:3, :3] = rot
+        m[:3, 3] = rest_global_pos[j]
+        inv = np.eye(4)
+        inv[:3, :3] = rot.T
+        inv[:3, 3] = -rot.T @ rest_global_pos[j]
+        # glTF stores matrices column-major; C-order flatten of the transpose.
+        ibm[j] = inv.T.reshape(16)
+    ibm_acc = b.add_accessor(ibm, _COMP_F32, "MAT4")
+
+    nodes: list[dict] = []
+    children: dict[int, list[int]] = {}
+    for j, p in enumerate(parents):
+        if p >= 0:
+            children.setdefault(int(p), []).append(j)
+    roots = [j for j, p in enumerate(parents) if p < 0]
+    for j in range(n):
+        node: dict = {
+            "name": joint_names[j],
+            "translation": [float(v) for v in rest_local_pos[j]],
+            "rotation": [float(v) for v in rest_local_rot[j]],
+        }
+        if j in children:
+            node["children"] = children[j]
+        nodes.append(node)
+    nodes.append({"name": "character", "mesh": 0, "skin": 0})
+
+    t_acc = b.add_accessor(
+        times.astype(np.float32).reshape(-1, 1), _COMP_F32, "SCALAR", minmax=True
+    )
+    samplers: list[dict] = []
+    channels: list[dict] = []
+    for j, quats in rotation_channels.items():
+        out = b.add_accessor(quats.astype(np.float32), _COMP_F32, "VEC4")
+        samplers.append({"input": t_acc, "interpolation": "LINEAR", "output": out})
+        channels.append(
+            {"sampler": len(samplers) - 1, "target": {"node": int(j), "path": "rotation"}}
+        )
+    for j, trans in translation_channels.items():
+        out = b.add_accessor(trans.astype(np.float32), _COMP_F32, "VEC3")
+        samplers.append({"input": t_acc, "interpolation": "LINEAR", "output": out})
+        channels.append(
+            {
+                "sampler": len(samplers) - 1,
+                "target": {"node": int(j), "path": "translation"},
+            }
+        )
+
+    gltf = {
+        "asset": {"version": "2.0", "generator": "tongflow-modal-sapiens2"},
+        "scene": 0,
+        "scenes": [{"nodes": [*roots, n]}],
+        "nodes": nodes,
+        "meshes": [
+            {
+                "primitives": [
+                    {
+                        "attributes": {
+                            "POSITION": pos_acc,
+                            "JOINTS_0": jnt_acc,
+                            "WEIGHTS_0": wgt_acc,
+                        },
+                        "indices": idx_acc,
+                        "material": 0,
+                        "mode": 4,
+                    }
+                ]
+            }
+        ],
+        "materials": [
+            {
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": list(color),
+                    "metallicFactor": 0.05,
+                    "roughnessFactor": 0.75,
+                },
+                "doubleSided": True,
+            }
+        ],
+        "skins": [
+            {
+                "inverseBindMatrices": ibm_acc,
+                "joints": list(range(n)),
+                "skeleton": int(roots[0]),
+            }
+        ],
+        "animations": [{"name": "mocap", "samplers": samplers, "channels": channels}],
+    }
+    return b.finish(gltf)
+
+
 def point_cloud_glb(points: np.ndarray, colors_rgb: np.ndarray) -> bytes:
     """Colored point cloud GLB. points (N,3) float; colors (N,3) uint8."""
     b = _Builder()

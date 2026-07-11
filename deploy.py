@@ -79,6 +79,7 @@ image = (
     # latest vendored pipeline without baking a cacheable image layer.
     .add_local_file(str(_HERE / "sapiens2_runtime.py"), "/opt/sapiens2_plugin/sapiens2_runtime.py")
     .add_local_file(str(_HERE / "mocap_pipeline.py"), "/opt/sapiens2_plugin/mocap_pipeline.py")
+    .add_local_file(str(_HERE / "mocap_retarget.py"), "/opt/sapiens2_plugin/mocap_retarget.py")
     .add_local_file(str(_HERE / "gltf_writer.py"), "/opt/sapiens2_plugin/gltf_writer.py")
 )
 
