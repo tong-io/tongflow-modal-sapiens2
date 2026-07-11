@@ -27,6 +27,7 @@ from gltf_writer import Joint, skeleton_animation_glb
 
 MOCAP_FPS = float(os.environ.get("MOCAP_FPS", "24"))
 MOCAP_MAX_SECONDS = float(os.environ.get("MOCAP_MAX_SECONDS", "60"))
+MOCAP_BATCH = int(os.environ.get("MOCAP_BATCH", "4"))
 MOCAP_MAX_DIM = int(os.environ.get("MOCAP_MAX_DIM", "1920"))
 POSE_CONF_THR = float(os.environ.get("MOCAP_POSE_CONF_THR", "0.3"))
 # One-Euro parameters (position smoothing, per joint channel)
@@ -271,16 +272,17 @@ def track_person(hub: rt.ModelHub, frames: list[np.ndarray]) -> list[np.ndarray]
     """One bbox per frame: largest person, then IoU continuity."""
     boxes: list[np.ndarray] = []
     prev: np.ndarray | None = None
-    for frame in frames:
-        dets = rt.detect_persons(hub, frame)
-        if prev is None:
-            areas = (dets[:, 2] - dets[:, 0]) * (dets[:, 3] - dets[:, 1])
-            pick = dets[int(np.argmax(areas * (dets[:, 4] + 0.1)))]
-        else:
-            ious = np.array([_iou(prev, d) for d in dets])
-            pick = dets[int(np.argmax(ious))] if ious.max() > 0.1 else prev
-        boxes.append(pick[:4])
-        prev = pick[:4]
+    for start in range(0, len(frames), MOCAP_BATCH):
+        chunk = frames[start : start + MOCAP_BATCH]
+        for dets in rt.detect_persons_batch(hub, chunk):
+            if prev is None:
+                areas = (dets[:, 2] - dets[:, 0]) * (dets[:, 3] - dets[:, 1])
+                pick = dets[int(np.argmax(areas * (dets[:, 4] + 0.1)))]
+            else:
+                ious = np.array([_iou(prev, d) for d in dets])
+                pick = dets[int(np.argmax(ious))] if ious.max() > 0.1 else prev
+            boxes.append(pick[:4])
+            prev = pick[:4]
     return boxes
 
 
@@ -310,26 +312,29 @@ def capture(hub: rt.ModelHub, video_bytes: bytes, progress=None) -> bytes:
     conf = np.zeros((n_frames, n_kpts), dtype=np.float64)
     points_3d = np.full((n_frames, n_kpts, 3), np.nan)
 
-    for f, frame in enumerate(frames):
-        if f % 24 == 0:
-            report(f"mocap: pose+depth {f}/{n_frames}")
-        kp_list, sc_list = rt.pose_infer(hub, frame, np.asarray([boxes[f]]))
-        kpts_2d[f], conf[f] = kp_list[0], sc_list[0]
-
-        pm = rt.pointmap_metric(hub, frame)  # (H, W, 3) camera coords
-        u = np.clip(kpts_2d[f, :, 0], 0, w - 1)
-        v = np.clip(kpts_2d[f, :, 1], 0, h - 1)
-        u0, v0 = np.floor(u).astype(int), np.floor(v).astype(int)
-        u1, v1 = np.minimum(u0 + 1, w - 1), np.minimum(v0 + 1, h - 1)
-        fu, fv = (u - u0)[:, None], (v - v0)[:, None]
-        sample = (
-            pm[v0, u0] * (1 - fu) * (1 - fv)
-            + pm[v0, u1] * fu * (1 - fv)
-            + pm[v1, u0] * (1 - fu) * fv
-            + pm[v1, u1] * fu * fv
+    for start in range(0, n_frames, MOCAP_BATCH):
+        report(f"mocap: pose+depth {start}/{n_frames}")
+        end = min(start + MOCAP_BATCH, n_frames)
+        chunk = frames[start:end]
+        kpts_2d[start:end], conf[start:end] = rt.pose_infer_frames(
+            hub, chunk, boxes[start:end]
         )
-        ok = conf[f] >= POSE_CONF_THR
-        points_3d[f, ok] = sample[ok]
+        pms = rt.pointmap_metric_frames(hub, chunk)  # (B, H, W, 3) camera coords
+        for f in range(start, end):
+            pm = pms[f - start]
+            u = np.clip(kpts_2d[f, :, 0], 0, w - 1)
+            v = np.clip(kpts_2d[f, :, 1], 0, h - 1)
+            u0, v0 = np.floor(u).astype(int), np.floor(v).astype(int)
+            u1, v1 = np.minimum(u0 + 1, w - 1), np.minimum(v0 + 1, h - 1)
+            fu, fv = (u - u0)[:, None], (v - v0)[:, None]
+            sample = (
+                pm[v0, u0] * (1 - fu) * (1 - fv)
+                + pm[v0, u1] * fu * (1 - fv)
+                + pm[v1, u0] * (1 - fu) * fv
+                + pm[v1, u1] * fu * fv
+            )
+            ok = conf[f] >= POSE_CONF_THR
+            points_3d[f, ok] = sample[ok]
 
     # Camera coords are y-down / z-forward; glTF wants y-up.
     points_3d *= np.array([1.0, -1.0, -1.0])

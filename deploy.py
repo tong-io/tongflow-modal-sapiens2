@@ -22,6 +22,7 @@ Download weights: modal run download.py::download
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import modal
@@ -108,7 +109,9 @@ def _png(image_bgr_or_bgra: "np.ndarray") -> bytes:
 @deploy
 @app.cls(
     image=image,
-    gpu="L40S",
+    # Resolved at deploy time; changing it requires a redeploy (touch this
+    # file or `modal deploy deploy.py` manually).
+    gpu=os.environ.get("SAPIENS2_GPU", "L40S"),
     memory=32768,
     volumes={"/models": volume},
     timeout=3600,

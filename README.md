@@ -27,8 +27,11 @@ Checkpoints are public (no HF token needed). On first use the plugin deploys to 
 | Env | Default | Notes |
 | --- | --- | --- |
 | `SAPIENS2_MODEL_SIZE` | `1b` | Checkpoint size to load (`0.4b`, `0.8b`, `1b` — re-run the weight download after changing). |
-| `SAPIENS2_GPU_LRU` | `3` | Task models kept GPU-resident before evicting to CPU. |
+| `SAPIENS2_GPU` | `L40S` | Modal GPU type (`A100`, `H100`, ... — applied on the next deploy). |
+| `SAPIENS2_DTYPE` | `bf16` | Inference precision; set `fp32` to disable bf16. |
+| `SAPIENS2_GPU_LRU` | `5` (bf16) / `3` (fp32) | Task models kept GPU-resident before evicting to CPU. |
 | `MOCAP_FPS` | `24` | Mocap sampling framerate. |
+| `MOCAP_BATCH` | `4` | Frames per batched pose/pointmap/detector forward. |
 | `MOCAP_MAX_SECONDS` | `60` | Mocap duration cap. |
 | `MOCAP_POSE_CONF_THR` | `0.3` | Keypoint confidence below this is temporally interpolated. |
 | `MOCAP_ONE_EURO_MIN_CUTOFF` / `MOCAP_ONE_EURO_BETA` | `1.5` / `0.3` | Smoothing: lower cutoff = smoother, higher beta = snappier. |
