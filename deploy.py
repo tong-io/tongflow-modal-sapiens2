@@ -37,6 +37,15 @@ from tongflow.node_slots import NodeSlots
 from tongflow.protocol import asset, prompt_media_to_bytes
 from tongflow.slots import node_slot
 
+# Slots this plugin is the default implementation of: the node picker lists
+# it first and a newly added node preselects it. Read statically by the
+# scanner (never executed), so any SDK version imports this file fine.
+TONGFLOW_DEFAULT_SLOTS = [
+    "image-pose",
+    "image-normal",
+    "image-matting",
+]
+
 REPO_URL = "https://github.com/facebookresearch/sapiens2.git"
 # Pin the upstream revision so redeploys are reproducible (main moves).
 REPO_REV = "7e5bae88456ac418ff0e58e74106c9fe192055d4"
