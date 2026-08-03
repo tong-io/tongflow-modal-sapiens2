@@ -76,7 +76,7 @@ image = (
         f"git -C {REPO_DIR} checkout {REPO_REV}",
         f"pip install -e {REPO_DIR}",
     )
-    .pip_install("tongflow==0.2.20", "fastapi[standard]")
+    .pip_install("tongflow==0.2.21", "fastapi[standard]")
     .env(
         {
             "HF_HOME": "/models/hf",
