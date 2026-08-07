@@ -125,7 +125,7 @@ def _png(image_bgr_or_bgra: "np.ndarray") -> bytes:
     memory=32768,
     volumes={"/models": volume},
     timeout=3600,
-    scaledown_window=300,
+    scaledown_window=2,
 )
 class Inference:
     @modal.enter()
